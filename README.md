@@ -32,6 +32,42 @@ pip install -r requirements.txt
 export SEMANTIC_SCHOLAR_API_KEY="your-api-key-here"
 ```
 
+## Development
+
+### Setup Development Environment
+
+```bash
+# Install with development dependencies
+pip install -e ".[test,dev]"
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run only unit tests (fast, no API calls)
+make test-unit
+
+# Run integration tests (requires API key)
+export SEMANTIC_SCHOLAR_API_KEY="your-api-key"
+make test-integration
+
+# Run performance tests
+make test-performance
+```
+
+### Code Quality
+
+```bash
+# Run linting
+make lint
+
+# Format code
+make format
+```
+
 ## Configuration
 
 Add this server to your MCP client configuration:

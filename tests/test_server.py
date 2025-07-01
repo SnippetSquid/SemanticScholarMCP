@@ -1,0 +1,402 @@
+"""Tests for the Semantic Scholar MCP server."""
+
+import json
+import pytest
+import httpx
+from unittest.mock import AsyncMock, patch
+from semantic_scholar_mcp.server import (
+    mcp,
+    make_api_request,
+    format_paper,
+    format_author,
+    search_papers,
+    get_paper,
+    get_paper_batch,
+    search_authors,
+    get_author,
+    search_snippets,
+    get_paper_citations,
+    get_paper_references,
+    get_citation_context
+)
+
+
+class TestApiRequest:
+    """Test the make_api_request function."""
+    
+    @pytest.mark.asyncio
+    async def test_successful_get_request(self, httpx_mock):
+        """Test successful GET request."""
+        mock_response = {"data": [{"title": "Test Paper"}]}
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.semanticscholar.org/graph/v1/paper/search?query=test",
+            json=mock_response
+        )
+        
+        result = await make_api_request("paper/search", {"query": "test"})
+        assert result == mock_response
+    
+    @pytest.mark.asyncio
+    async def test_http_error_handling(self):
+        """Test HTTP error handling."""
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get.side_effect = Exception("HTTP error")
+            
+            result = await make_api_request("paper/search", {"query": "test"})
+            assert "error" in result
+            assert "Request failed" in result["error"]
+
+
+class TestFormatting:
+    """Test formatting functions."""
+    
+    def test_format_paper(self):
+        """Test paper formatting."""
+        paper = {
+            "title": "Test Paper",
+            "authors": [{"name": "John Doe"}, {"name": "Jane Smith"}],
+            "year": 2023,
+            "venue": "Test Conference",
+            "citationCount": 42,
+            "paperId": "test123"
+        }
+        
+        result = format_paper(paper)
+        assert "Test Paper" in result
+        assert "John Doe, Jane Smith" in result
+        assert "(2023)" in result
+        assert "Test Conference" in result
+        assert "Citations: 42" in result
+        assert "Paper ID: test123" in result
+    
+    def test_format_paper_many_authors(self):
+        """Test paper formatting with many authors."""
+        paper = {
+            "title": "Test Paper",
+            "authors": [
+                {"name": "Author 1"},
+                {"name": "Author 2"},
+                {"name": "Author 3"},
+                {"name": "Author 4"},
+                {"name": "Author 5"}
+            ],
+            "year": 2023,
+            "citationCount": 10,
+            "paperId": "test123"
+        }
+        
+        result = format_paper(paper)
+        assert "Author 1, Author 2, Author 3 (and 2 others)" in result
+    
+    def test_format_author(self):
+        """Test author formatting."""
+        author = {
+            "name": "John Doe",
+            "authorId": "author123",
+            "paperCount": 50,
+            "citationCount": 1000,
+            "hIndex": 25
+        }
+        
+        result = format_author(author)
+        assert "John Doe" in result
+        assert "author123" in result
+        assert "Papers: 50" in result
+        assert "Citations: 1000" in result
+        assert "H-Index: 25" in result
+
+
+class TestSearchPapers:
+    """Test the search_papers tool."""
+    
+    @pytest.mark.asyncio
+    async def test_search_papers_success(self):
+        """Test successful paper search."""
+        mock_response = {
+            "data": [
+                {
+                    "title": "Test Paper",
+                    "authors": [{"name": "John Doe"}],
+                    "year": 2023,
+                    "venue": "Test Conference",
+                    "citationCount": 10,
+                    "paperId": "test123"
+                }
+            ],
+            "total": 1
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await search_papers("machine learning", limit=10)
+            
+            assert "Found 1 total papers" in result
+            assert "Test Paper" in result
+            assert "John Doe" in result
+    
+    @pytest.mark.asyncio
+    async def test_search_papers_no_results(self):
+        """Test paper search with no results."""
+        mock_response = {"data": [], "total": 0}
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await search_papers("nonexistent query")
+            
+            assert "No papers found" in result
+    
+    @pytest.mark.asyncio
+    async def test_search_papers_error(self):
+        """Test paper search with API error."""
+        mock_response = {"error": "API error"}
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await search_papers("test query")
+            
+            assert "Error: API error" in result
+
+
+class TestGetPaper:
+    """Test the get_paper tool."""
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_success(self):
+        """Test successful paper retrieval."""
+        mock_response = {
+            "title": "Test Paper",
+            "authors": [{"name": "John Doe"}],
+            "year": 2023,
+            "venue": "Test Conference",
+            "citationCount": 10,
+            "paperId": "test123",
+            "abstract": "This is a test abstract.",
+            "references": [{"paperId": "ref1"}],
+            "citations": [{"paperId": "cite1"}],
+            "openAccessPdf": {"url": "http://example.com/paper.pdf"}
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper("test123")
+            
+            assert "Test Paper" in result
+            assert "John Doe" in result
+            assert "This is a test abstract" in result
+            assert "References: 1" in result
+            assert "Cited by: 1" in result
+            assert "http://example.com/paper.pdf" in result
+
+
+class TestGetPaperBatch:
+    """Test the get_paper_batch tool."""
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_batch_success(self):
+        """Test successful batch paper retrieval."""
+        mock_response = [
+            {
+                "title": "Paper 1",
+                "authors": [{"name": "Author 1"}],
+                "year": 2023,
+                "citationCount": 5,
+                "paperId": "paper1"
+            },
+            {
+                "title": "Paper 2",
+                "authors": [{"name": "Author 2"}],
+                "year": 2022,
+                "citationCount": 10,
+                "paperId": "paper2"
+            }
+        ]
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper_batch("paper1,paper2")
+            
+            assert "Retrieved 2 papers" in result
+            assert "Paper 1" in result
+            assert "Paper 2" in result
+
+
+class TestSearchAuthors:
+    """Test the search_authors tool."""
+    
+    @pytest.mark.asyncio
+    async def test_search_authors_success(self):
+        """Test successful author search."""
+        mock_response = {
+            "data": [
+                {
+                    "name": "John Doe",
+                    "authorId": "author123",
+                    "paperCount": 50,
+                    "citationCount": 1000,
+                    "hIndex": 25
+                }
+            ],
+            "total": 1
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await search_authors("John Doe")
+            
+            assert "Found 1 total authors" in result
+            assert "John Doe" in result
+            assert "Papers: 50" in result
+
+
+class TestGetAuthor:
+    """Test the get_author tool."""
+    
+    @pytest.mark.asyncio
+    async def test_get_author_success(self):
+        """Test successful author retrieval."""
+        mock_response = {
+            "name": "John Doe",
+            "authorId": "author123",
+            "paperCount": 50,
+            "citationCount": 1000,
+            "hIndex": 25,
+            "papers": [
+                {
+                    "title": "Recent Paper",
+                    "year": 2023,
+                    "citationCount": 15
+                }
+            ]
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_author("author123")
+            
+            assert "John Doe" in result
+            assert "Total Papers: 50" in result
+            assert "H-Index: 25" in result
+            assert "Recent Paper" in result
+
+
+class TestSearchSnippets:
+    """Test the search_snippets tool."""
+    
+    @pytest.mark.asyncio
+    async def test_search_snippets_success(self):
+        """Test successful snippet search."""
+        mock_response = {
+            "data": [
+                {
+                    "text": "This is a test snippet about machine learning.",
+                    "paper": {
+                        "title": "ML Paper",
+                        "year": 2023
+                    }
+                }
+            ],
+            "total": 1
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await search_snippets("machine learning")
+            
+            assert "Found 1 total snippets" in result
+            assert "This is a test snippet" in result
+            assert "ML Paper (2023)" in result
+
+
+class TestCitationTools:
+    """Test citation and reference tools."""
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_citations_success(self):
+        """Test successful citation retrieval."""
+        mock_response = {
+            "data": [
+                {
+                    "citingPaper": {
+                        "title": "Citing Paper",
+                        "authors": [{"name": "Author"}],
+                        "year": 2024,
+                        "citationCount": 5,
+                        "paperId": "citing123"
+                    }
+                }
+            ],
+            "total": 1
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper_citations("paper123")
+            
+            assert "Found 1 total citations" in result
+            assert "Citing Paper" in result
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_references_success(self):
+        """Test successful reference retrieval."""
+        mock_response = {
+            "data": [
+                {
+                    "citedPaper": {
+                        "title": "Referenced Paper",
+                        "authors": [{"name": "Author"}],
+                        "year": 2020,
+                        "citationCount": 100,
+                        "paperId": "ref123"
+                    }
+                }
+            ],
+            "total": 1
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper_references("paper123")
+            
+            assert "Found 1 total references" in result
+            assert "Referenced Paper" in result
+    
+    @pytest.mark.asyncio
+    async def test_get_citation_context_success(self):
+        """Test successful citation context retrieval."""
+        mock_response = {
+            "contexts": [
+                "This paper builds on the work of Smith et al. (2020).",
+                "The methodology follows the approach described in the original paper."
+            ],
+            "citingPaper": {"title": "Citing Paper"},
+            "citedPaper": {"title": "Cited Paper"}
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_citation_context("cited123", "citing123")
+            
+            assert "Citation context:" in result
+            assert "Citing Paper" in result
+            assert "Cited Paper" in result
+            assert "This paper builds on the work" in result
+
+
+class TestEdgeCases:
+    """Test edge cases and error conditions."""
+    
+    @pytest.mark.asyncio
+    async def test_api_request_failure(self):
+        """Test API request failure handling."""
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=None):
+            result = await search_papers("test")
+            assert "Error: Failed to fetch results" in result
+    
+    def test_format_paper_missing_fields(self):
+        """Test paper formatting with missing fields."""
+        paper = {"title": "Minimal Paper"}
+        result = format_paper(paper)
+        assert "Minimal Paper" in result
+        assert "Unknown" in result or "0" in result
+    
+    def test_format_author_missing_fields(self):
+        """Test author formatting with missing fields."""
+        author = {"name": "Minimal Author"}
+        result = format_author(author)
+        assert "Minimal Author" in result
+        assert "0" in result or "" in result
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

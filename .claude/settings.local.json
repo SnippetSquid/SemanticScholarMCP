@@ -4,7 +4,17 @@
       "WebFetch(domain:www.semanticscholar.org)",
       "WebFetch(domain:modelcontextprotocol.io)",
       "WebFetch(domain:api.semanticscholar.org)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(python -m pytest tests/test_server.py::TestFormatting::test_format_paper -v)",
+      "Bash(python3 -m pytest tests/test_server.py::TestFormatting::test_format_paper -v)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(pip install:*)",
+      "Bash(python -m pytest tests/test_server.py -v)",
+      "Bash(python -m pytest tests/test_server.py::TestApiRequest::test_successful_get_request -v)",
+      "Bash(python -m pytest tests/test_server.py -m \"not integration and not performance\" -v)",
+      "Bash(make test-unit:*)"
     ],
     "deny": []
   }
