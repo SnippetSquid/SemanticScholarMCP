@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic-scholar-mcp"
+version = "0.1.0"
+description = "MCP server for accessing Semantic Scholar academic papers"
+authors = [
+    {name = "SnippetSquid", email = "info@snippetsquid.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "mcp>=1.0.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/SnippetSquid/SemanticScholarMCP"
+Repository = "https://github.com/SnippetSquid/SemanticScholarMCP"
+
+[project.scripts]
+semantic-scholar-mcp = "semantic_scholar_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.semanticscholar.org)",
+      "WebFetch(domain:modelcontextprotocol.io)",
+      "WebFetch(domain:api.semanticscholar.org)",
+      "Bash(mkdir:*)"
+    ],
+    "deny": []
+  }
+}
