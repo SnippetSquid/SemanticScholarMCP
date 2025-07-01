@@ -2,8 +2,10 @@
 
 import os
 import json
+import re
+from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -45,6 +47,16 @@ async def make_api_request(
             response.raise_for_status()
             return response.json()
     
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 403:
+            if not API_KEY:
+                return {"error": "Rate limit exceeded. The shared public rate limit (1000 req/sec) may be exceeded. Get a free API key from https://www.semanticscholar.org/product/api for dedicated limits."}
+            else:
+                return {"error": f"API key may be invalid or rate limit exceeded: {str(e)}"}
+        elif e.response.status_code == 429:
+            return {"error": "Rate limit exceeded. Please wait a moment and try again, or get an API key for dedicated higher limits."}
+        else:
+            return {"error": f"HTTP error: {str(e)}"}
     except httpx.HTTPError as e:
         return {"error": f"HTTP error: {str(e)}"}
     except Exception as e:
@@ -587,6 +599,226 @@ async def get_citation_context(
     
     for i, context in enumerate(contexts, 1):
         result_text += f"{i}. {context}\n"
+    
+    return result_text
+
+
+def create_safe_filename(title: str, max_length: int = 100) -> str:
+    """Create a safe filename from paper title."""
+    # Remove/replace problematic characters
+    safe_title = re.sub(r'[<>:"/\\|?*]', '', title)  # Remove forbidden chars
+    safe_title = re.sub(r'\s+', ' ', safe_title)  # Normalize whitespace
+    safe_title = safe_title.strip()
+    
+    # Limit length
+    if len(safe_title) > max_length:
+        safe_title = safe_title[:max_length].rsplit(' ', 1)[0]  # Break at word boundary
+    
+    return safe_title if safe_title else "Unknown_Paper"
+
+
+def set_pdf_metadata(file_path: Path, title: str, authors: List[Dict], year: Optional[int]):
+    """Set PDF metadata using PyPDF2 if available."""
+    try:
+        from PyPDF2 import PdfReader, PdfWriter
+        import io
+        
+        # Read the existing PDF
+        with open(file_path, 'rb') as f:
+            reader = PdfReader(f)
+            writer = PdfWriter()
+            
+            # Copy all pages
+            for page in reader.pages:
+                writer.add_page(page)
+            
+            # Create author string
+            author_names = [author.get("name", "") for author in authors if author.get("name")]
+            author_str = ", ".join(author_names[:5])  # Limit to first 5 authors
+            if len(authors) > 5:
+                author_str += " et al."
+            
+            # Set metadata
+            metadata = {
+                '/Title': title,
+                '/Author': author_str,
+                '/Creator': 'Semantic Scholar MCP',
+                '/Producer': 'Semantic Scholar MCP'
+            }
+            
+            if year:
+                metadata['/CreationDate'] = f"D:{year}0101000000Z"
+            
+            writer.add_metadata(metadata)
+            
+            # Write back to file
+            with open(file_path, 'wb') as output_f:
+                writer.write(output_f)
+                
+        return True
+        
+    except ImportError:
+        # PyPDF2 not available - skip metadata setting
+        return False
+    except Exception as e:
+        # Error setting metadata - file is still saved
+        print(f"Warning: Could not set PDF metadata: {e}")
+        return False
+
+
+@mcp.tool()
+async def download_paper_pdf(
+    paper_id: str,
+    download_path: Optional[str] = None
+) -> str:
+    """
+    Download the PDF of a paper if available, using title as filename and setting metadata.
+    
+    Args:
+        paper_id: Paper ID (Semantic Scholar ID, DOI, ArXiv ID, etc.)
+        download_path: Directory to save the PDF (default: ~/Downloads/semantic_scholar_papers)
+    
+    Returns:
+        Status message with download location or error
+    """
+    # Get paper info including title, authors, year, and PDF URL
+    paper_result = await make_api_request(f"paper/{quote(paper_id, safe='')}", 
+                                        {"fields": "paperId,title,authors,year,openAccessPdf"})
+    
+    if paper_result is None:
+        return "Error: Failed to fetch paper information"
+    
+    if "error" in paper_result:
+        return f"Error: {paper_result['error']}"
+    
+    # Check if PDF is available
+    open_access = paper_result.get("openAccessPdf")
+    if not open_access or not open_access.get("url"):
+        return "Error: No open access PDF available for this paper"
+    
+    pdf_url = open_access["url"]
+    title = paper_result.get("title", "Unknown Paper")
+    authors = paper_result.get("authors", [])
+    year = paper_result.get("year")
+    paper_id_clean = paper_result.get("paperId", paper_id)
+    
+    # Set up download path
+    if download_path is None:
+        download_path = Path.home() / "Downloads" / "semantic_scholar_papers"
+    else:
+        download_path = Path(download_path)
+    
+    # Create directory if it doesn't exist
+    download_path.mkdir(parents=True, exist_ok=True)
+    
+    # Create filename from title
+    safe_title = create_safe_filename(title)
+    year_str = f" ({year})" if year else ""
+    filename = f"{safe_title}{year_str}.pdf"
+    file_path = download_path / filename
+    
+    # Handle duplicate filenames
+    counter = 1
+    original_file_path = file_path
+    while file_path.exists():
+        stem = original_file_path.stem
+        suffix = original_file_path.suffix
+        file_path = original_file_path.parent / f"{stem} ({counter}){suffix}"
+        counter += 1
+    
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            headers = {
+                "User-Agent": "semantic-scholar-mcp/1.0"
+            }
+            
+            response = await client.get(pdf_url, headers=headers, follow_redirects=True)
+            response.raise_for_status()
+            
+            # Check if it's actually a PDF
+            content_type = response.headers.get("content-type", "")
+            if "pdf" not in content_type.lower() and not pdf_url.lower().endswith('.pdf'):
+                return f"Warning: Downloaded file may not be a PDF (Content-Type: {content_type})"
+            
+            # Write the PDF file
+            with open(file_path, "wb") as f:
+                f.write(response.content)
+            
+            file_size = len(response.content) / (1024 * 1024)  # MB
+            
+            # Set PDF metadata
+            metadata_set = set_pdf_metadata(file_path, title, authors, year)
+            
+            # Create author summary for output
+            author_names = [author.get("name", "") for author in authors[:3]]
+            author_summary = ", ".join(author_names)
+            if len(authors) > 3:
+                author_summary += f" and {len(authors) - 3} others"
+            
+            result = f"✅ PDF downloaded successfully!\n\n"
+            result += f"Title: {title}\n"
+            result += f"Authors: {author_summary}\n"
+            if year:
+                result += f"Year: {year}\n"
+            result += f"Saved to: {file_path}\n"
+            result += f"File size: {file_size:.2f} MB\n"
+            
+            if metadata_set:
+                result += "✅ PDF metadata set with title, authors, and year"
+            else:
+                result += "⚠️ PDF saved but metadata not set (install PyPDF2 for metadata support)"
+            
+            return result
+    
+    except httpx.HTTPError as e:
+        return f"Error downloading PDF: {str(e)}"
+    except Exception as e:
+        return f"Error saving PDF: {str(e)}"
+
+
+@mcp.tool()
+async def get_paper_pdf_info(paper_id: str) -> str:
+    """
+    Get PDF availability information for a paper.
+    
+    Args:
+        paper_id: Paper ID (Semantic Scholar ID, DOI, ArXiv ID, etc.)
+    
+    Returns:
+        PDF availability information
+    """
+    encoded_id = quote(paper_id, safe='')
+    result = await make_api_request(f"paper/{encoded_id}", 
+                                  {"fields": "paperId,title,openAccessPdf,externalIds"})
+    
+    if result is None:
+        return "Error: Failed to fetch paper information"
+    
+    if "error" in result:
+        return f"Error: {result['error']}"
+    
+    title = result.get("title", "Unknown Title")
+    open_access = result.get("openAccessPdf")
+    external_ids = result.get("externalIds", {})
+    
+    result_text = f"PDF Information for: {title}\n\n"
+    
+    if open_access and open_access.get("url"):
+        pdf_url = open_access["url"]
+        result_text += f"✅ Open Access PDF Available\n"
+        result_text += f"URL: {pdf_url}\n"
+        result_text += f"Status: Ready for download\n\n"
+    else:
+        result_text += f"❌ No Open Access PDF Available\n\n"
+    
+    # Check for potential alternative sources
+    result_text += "Alternative sources to check:\n"
+    if external_ids.get("ArXiv"):
+        result_text += f"- ArXiv: https://arxiv.org/abs/{external_ids['ArXiv']}\n"
+    if external_ids.get("DOI"):
+        result_text += f"- Publisher (DOI): https://doi.org/{external_ids['DOI']}\n"
+    if external_ids.get("PubMed"):
+        result_text += f"- PubMed: https://pubmed.ncbi.nlm.nih.gov/{external_ids['PubMed']}/\n"
     
     return result_text
 

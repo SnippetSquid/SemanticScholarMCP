@@ -14,7 +14,10 @@
       "Bash(python -m pytest tests/test_server.py -v)",
       "Bash(python -m pytest tests/test_server.py::TestApiRequest::test_successful_get_request -v)",
       "Bash(python -m pytest tests/test_server.py -m \"not integration and not performance\" -v)",
-      "Bash(make test-unit:*)"
+      "Bash(make test-unit:*)",
+      "Bash(cat:*)",
+      "Bash(cp:*)",
+      "Bash(python:*)"
     ],
     "deny": []
   }

@@ -17,7 +17,11 @@ from semantic_scholar_mcp.server import (
     search_snippets,
     get_paper_citations,
     get_paper_references,
-    get_citation_context
+    get_citation_context,
+    create_safe_filename,
+    set_pdf_metadata,
+    download_paper_pdf,
+    get_paper_pdf_info
 )
 
 
@@ -47,6 +51,51 @@ class TestApiRequest:
             result = await make_api_request("paper/search", {"query": "test"})
             assert "error" in result
             assert "Request failed" in result["error"]
+    
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_no_api_key(self, httpx_mock):
+        """Test rate limit error handling without API key."""
+        # Mock no API key
+        with patch("semantic_scholar_mcp.server.API_KEY", None):
+            httpx_mock.add_response(
+                method="GET",
+                url="https://api.semanticscholar.org/graph/v1/paper/search?query=test",
+                status_code=403
+            )
+            
+            result = await make_api_request("paper/search", {"query": "test"})
+            assert "error" in result
+            assert "shared public rate limit (1000 req/sec)" in result["error"]
+            assert "semanticscholar.org/product/api" in result["error"]
+    
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_with_api_key(self, httpx_mock):
+        """Test rate limit error handling with API key."""
+        # Mock the API_KEY global variable
+        with patch("semantic_scholar_mcp.server.API_KEY", "test-key"):
+            httpx_mock.add_response(
+                method="GET",
+                url="https://api.semanticscholar.org/graph/v1/paper/search?query=test",
+                status_code=403
+            )
+            
+            result = await make_api_request("paper/search", {"query": "test"})
+            assert "error" in result
+            assert "API key may be invalid or rate limit exceeded" in result["error"]
+    
+    @pytest.mark.asyncio
+    async def test_429_error_handling(self, httpx_mock):
+        """Test 429 rate limit error handling."""
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.semanticscholar.org/graph/v1/paper/search?query=test",
+            status_code=429
+        )
+        
+        result = await make_api_request("paper/search", {"query": "test"})
+        assert "error" in result
+        assert "Rate limit exceeded" in result["error"]
+        assert "dedicated higher limits" in result["error"]
 
 
 class TestFormatting:
@@ -396,6 +445,229 @@ class TestEdgeCases:
         result = format_author(author)
         assert "Minimal Author" in result
         assert "0" in result or "" in result
+
+
+class TestPDFTools:
+    """Test PDF-related functionality."""
+    
+    def test_create_safe_filename(self):
+        """Test filename sanitization."""
+        # Test normal title
+        title = "Machine Learning: A Comprehensive Review"
+        safe_name = create_safe_filename(title)
+        assert safe_name == "Machine Learning A Comprehensive Review"
+        
+        # Test with problematic characters
+        title_with_bad_chars = 'Deep Learning: "Computer Vision" & NLP <2023>'
+        safe_name = create_safe_filename(title_with_bad_chars)
+        assert safe_name == "Deep Learning Computer Vision & NLP 2023"
+        
+        # Test with forbidden characters
+        title_forbidden = "Paper/Title\\With:Bad*Characters?"
+        safe_name = create_safe_filename(title_forbidden)
+        assert "/" not in safe_name
+        assert "\\" not in safe_name
+        assert ":" not in safe_name
+        assert "*" not in safe_name
+        assert "?" not in safe_name
+        
+        # Test length limiting
+        long_title = "A" * 200  # Very long title
+        safe_name = create_safe_filename(long_title, max_length=50)
+        assert len(safe_name) <= 50
+        
+        # Test empty title
+        empty_title = ""
+        safe_name = create_safe_filename(empty_title)
+        assert safe_name == "Unknown_Paper"
+    
+    def test_set_pdf_metadata_no_pypdf2(self):
+        """Test metadata setting when PyPDF2 is not available."""
+        from pathlib import Path
+        import tempfile
+        
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+            tmp.write(b"fake pdf content")
+            tmp_path = Path(tmp.name)
+        
+        try:
+            # Mock PyPDF2 import failure
+            with patch('builtins.__import__', side_effect=ImportError("No module named 'PyPDF2'")):
+                result = set_pdf_metadata(tmp_path, "Test Title", [{"name": "Author"}], 2023)
+                assert result is False
+        finally:
+            # Clean up
+            tmp_path.unlink()
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_pdf_info_success(self):
+        """Test PDF info retrieval."""
+        mock_response = {
+            "title": "Test Paper",
+            "openAccessPdf": {"url": "http://example.com/paper.pdf"},
+            "externalIds": {
+                "ArXiv": "2301.12345",
+                "DOI": "10.1000/test",
+                "PubMed": "12345678"
+            }
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper_pdf_info("test-paper-id")
+            
+            assert "✅ Open Access PDF Available" in result
+            assert "http://example.com/paper.pdf" in result
+            assert "ArXiv: https://arxiv.org/abs/2301.12345" in result
+            assert "Publisher (DOI): https://doi.org/10.1000/test" in result
+    
+    @pytest.mark.asyncio
+    async def test_get_paper_pdf_info_no_pdf(self):
+        """Test PDF info when no PDF is available."""
+        mock_response = {
+            "title": "Test Paper",
+            "openAccessPdf": None,
+            "externalIds": {"DOI": "10.1000/test"}
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await get_paper_pdf_info("test-paper-id")
+            
+            assert "❌ No Open Access PDF Available" in result
+            assert "Publisher (DOI): https://doi.org/10.1000/test" in result
+    
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_no_pdf(self):
+        """Test PDF download when no PDF is available."""
+        mock_response = {
+            "title": "Test Paper",
+            "authors": [{"name": "Test Author"}],
+            "year": 2023,
+            "openAccessPdf": None,
+            "paperId": "test123"
+        }
+        
+        with patch("semantic_scholar_mcp.server.make_api_request", return_value=mock_response):
+            result = await download_paper_pdf("test-paper-id")
+            
+            assert "Error: No open access PDF available" in result
+    
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_success(self, httpx_mock, tmp_path):
+        """Test successful PDF download."""
+        # Mock the paper info request
+        mock_paper_response = {
+            "title": "Test Paper",
+            "authors": [{"name": "Test Author"}, {"name": "Second Author"}],
+            "year": 2023,
+            "openAccessPdf": {"url": "http://example.com/paper.pdf"},
+            "paperId": "test123"
+        }
+        
+        # Mock PDF content
+        fake_pdf_content = b"%PDF-1.4 fake pdf content"
+        
+        # Setup mocks
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.semanticscholar.org/graph/v1/paper/test-paper-id?fields=paperId%2Ctitle%2Cauthors%2Cyear%2CopenAccessPdf",
+            json=mock_paper_response
+        )
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com/paper.pdf",
+            content=fake_pdf_content,
+            headers={"content-type": "application/pdf"}
+        )
+        
+        # Test with custom download path
+        with patch("semantic_scholar_mcp.server.set_pdf_metadata", return_value=True):
+            result = await download_paper_pdf("test-paper-id", str(tmp_path))
+            
+            assert "✅ PDF downloaded successfully!" in result
+            assert "Test Paper" in result
+            assert "Test Author, Second Author" in result
+            assert "2023" in result
+            assert "✅ PDF metadata set" in result
+            
+            # Check that file was created
+            expected_file = tmp_path / "Test Paper (2023).pdf"
+            assert expected_file.exists()
+            
+            # Check file content
+            with open(expected_file, 'rb') as f:
+                content = f.read()
+                assert content == fake_pdf_content
+    
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_duplicate_filename(self, httpx_mock, tmp_path):
+        """Test PDF download with duplicate filename handling."""
+        # Create an existing file
+        existing_file = tmp_path / "Test Paper (2023).pdf"
+        existing_file.write_bytes(b"existing content")
+        
+        mock_paper_response = {
+            "title": "Test Paper",
+            "authors": [{"name": "Test Author"}],
+            "year": 2023,
+            "openAccessPdf": {"url": "http://example.com/paper.pdf"},
+            "paperId": "test123"
+        }
+        
+        fake_pdf_content = b"%PDF-1.4 fake pdf content"
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.semanticscholar.org/graph/v1/paper/test-paper-id?fields=paperId%2Ctitle%2Cauthors%2Cyear%2CopenAccessPdf",
+            json=mock_paper_response
+        )
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com/paper.pdf",
+            content=fake_pdf_content,
+            headers={"content-type": "application/pdf"}
+        )
+        
+        with patch("semantic_scholar_mcp.server.set_pdf_metadata", return_value=True):
+            result = await download_paper_pdf("test-paper-id", str(tmp_path))
+            
+            assert "✅ PDF downloaded successfully!" in result
+            
+            # Check that new file was created with (1) suffix
+            expected_file = tmp_path / "Test Paper (2023) (1).pdf"
+            assert expected_file.exists()
+            
+            # Original file should still exist
+            assert existing_file.exists()
+    
+    @pytest.mark.asyncio
+    async def test_download_paper_pdf_http_error(self, httpx_mock):
+        """Test PDF download with HTTP error."""
+        mock_paper_response = {
+            "title": "Test Paper",
+            "authors": [{"name": "Test Author"}],
+            "year": 2023,
+            "openAccessPdf": {"url": "http://example.com/paper.pdf"},
+            "paperId": "test123"
+        }
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="https://api.semanticscholar.org/graph/v1/paper/test-paper-id?fields=paperId%2Ctitle%2Cauthors%2Cyear%2CopenAccessPdf",
+            json=mock_paper_response
+        )
+        
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com/paper.pdf",
+            status_code=404
+        )
+        
+        result = await download_paper_pdf("test-paper-id")
+        
+        assert "Error downloading PDF:" in result
 
 
 if __name__ == "__main__":
