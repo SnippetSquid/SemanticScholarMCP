@@ -67,7 +67,7 @@ pytest -k "test_format_paper"  # Run specific test patterns
 
 **Fixtures:** Comprehensive mock data in `conftest.py` for papers, authors, citations, references.
 
-**CI/CD:** GitHub Actions runs lint → unit tests → integration tests (if API key available) across Python 3.8-3.11.
+**CI/CD:** GitHub Actions runs lint → unit tests → integration tests (if API key available) across Python 3.10-3.12.
 
 ## Error Handling Patterns
 
