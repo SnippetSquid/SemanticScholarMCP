@@ -1,0 +1,2 @@
+# SemanticScholarMCP
+Semantic Scholar MCP
