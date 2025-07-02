@@ -1,9 +1,10 @@
 """Pytest configuration and fixtures."""
 
-import pytest
 import asyncio
 import os
 from unittest.mock import patch
+
+import pytest
 
 
 @pytest.fixture(scope="session")
@@ -29,7 +30,7 @@ def sample_paper():
         "title": "Sample Paper Title",
         "authors": [
             {"name": "John Doe", "authorId": "author1"},
-            {"name": "Jane Smith", "authorId": "author2"}
+            {"name": "Jane Smith", "authorId": "author2"},
         ],
         "year": 2023,
         "venue": "Test Conference",
@@ -37,7 +38,7 @@ def sample_paper():
         "abstract": "This is a sample abstract for testing purposes.",
         "references": [{"paperId": "ref1"}, {"paperId": "ref2"}],
         "citations": [{"paperId": "cite1"}],
-        "openAccessPdf": {"url": "http://example.com/paper.pdf"}
+        "openAccessPdf": {"url": "http://example.com/paper.pdf"},
     }
 
 
@@ -51,17 +52,9 @@ def sample_author():
         "citationCount": 1000,
         "hIndex": 25,
         "papers": [
-            {
-                "title": "Recent Paper 1",
-                "year": 2023,
-                "citationCount": 15
-            },
-            {
-                "title": "Recent Paper 2",
-                "year": 2022,
-                "citationCount": 25
-            }
-        ]
+            {"title": "Recent Paper 1", "year": 2023, "citationCount": 15},
+            {"title": "Recent Paper 2", "year": 2022, "citationCount": 25},
+        ],
     }
 
 
@@ -76,7 +69,7 @@ def sample_search_response():
                 "authors": [{"name": "Author One"}],
                 "year": 2023,
                 "venue": "Conference A",
-                "citationCount": 10
+                "citationCount": 10,
             },
             {
                 "paperId": "paper2",
@@ -84,10 +77,10 @@ def sample_search_response():
                 "authors": [{"name": "Author Two"}],
                 "year": 2022,
                 "venue": "Conference B",
-                "citationCount": 5
-            }
+                "citationCount": 5,
+            },
         ],
-        "total": 2
+        "total": 2,
     }
 
 
@@ -102,11 +95,11 @@ def sample_citation_response():
                     "title": "Paper That Cites",
                     "authors": [{"name": "Citing Author"}],
                     "year": 2024,
-                    "citationCount": 3
+                    "citationCount": 3,
                 }
             }
         ],
-        "total": 1
+        "total": 1,
     }
 
 
@@ -121,9 +114,9 @@ def sample_reference_response():
                     "title": "Referenced Paper",
                     "authors": [{"name": "Referenced Author"}],
                     "year": 2020,
-                    "citationCount": 100
+                    "citationCount": 100,
                 }
             }
         ],
-        "total": 1
+        "total": 1,
     }
