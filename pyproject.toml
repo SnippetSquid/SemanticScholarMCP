@@ -12,6 +12,16 @@ authors = [
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
+keywords = ["mcp", "semantic-scholar", "academic", "papers", "research"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
 dependencies = [
     "mcp>=1.0.0",
     "httpx>=0.24.0",
@@ -40,6 +50,9 @@ Homepage = "https://github.com/SnippetSquid/SemanticScholarMCP"
 Repository = "https://github.com/SnippetSquid/SemanticScholarMCP"
 
 [project.scripts]
+semantic-scholar-mcp = "semantic_scholar_mcp.server:main"
+
+[project.entry-points."console_scripts"]
 semantic-scholar-mcp = "semantic_scholar_mcp.server:main"
 
 [tool.setuptools.packages.find]
