@@ -2,6 +2,10 @@
 
 A Model Context Protocol (MCP) server that provides access to the Semantic Scholar Academic Graph API. This server allows you to search for academic papers, authors, and get detailed information about citations and references.
 
+<a href="https://glama.ai/mcp/servers/@SnippetSquid/SemanticScholarMCP">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@SnippetSquid/SemanticScholarMCP/badge" alt="Semantic Scholar Server MCP server" />
+</a>
+
 ## Features
 
 - **Paper Search**: Search for academic papers with various filters
